@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Merry Christmas</title>
+  <style>
+    :root { --purple: #b388ff; }
+    body { margin: 0; background: #020104; color: white; font-family: sans-serif; overflow: hidden; }
+
+    /* ✅ 标题：罗曼字体 + 蓝色 */
+    #header-ui { position: absolute; top: 40px; width: 100%; text-align: center; z-index: 10; pointer-events: none; }
+    h1{
+      font-family: "Times New Roman", Times, serif;
+      font-weight: 400;
+      letter-spacing: 5px;
+      color: #7bbcff;
+      text-shadow:
+        0 0 10px rgba(123,188,255,0.55),
+        0 0 22px rgba(123,188,255,0.35),
+        0 0 36px rgba(179,136,255,0.25);
+    }
+
+    .glass-panel {
+      position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+      padding: 12px 25px; background: rgba(25, 10, 35, 0.7);
+      backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 40px; display: flex; align-items: center; gap: 15px; z-index: 100;
+    }
+    input { background: transparent; border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px; border-radius: 15px; width: 110px; outline: none; }
+    button { background: var(--purple); border: none; padding: 8px 18px; border-radius: 15px; cursor: pointer; font-weight: bold; color: #1a0a2e; }
+    #video-container { position: absolute; top: 20px; right: 20px; width: 160px; height: 120px; border: 2px solid var(--purple); border-radius: 10px; overflow: hidden; transform: scaleX(-1); background: #000; display: none; }
+    video { width: 100%; height: 100%; object-fit: cover; }
+    #toast {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 95px; padding: 8px 14px; border-radius: 999px;
+      background: rgba(20,10,30,0.55); border: 1px solid rgba(255,255,255,0.12); backdrop-filter: blur(16px);
+      font-size: 12px; opacity: 0; transition: opacity .25s ease; z-index: 120; pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
+    #err { position: absolute; left: 12px; bottom: 12px; right: 12px; padding: 10px 12px; border-radius: 12px; background: rgba(255,60,60,0.12); border: 1px solid rgba(255,60,60,0.25); font-size: 12px; display: none; z-index: 999; white-space: pre-wrap; }
+    #file-upload { display: none; }
+  </style>
+</head>
+<body>
+
+<div id="header-ui"><h1>Merry Christmas</h1></div>
+<div id="video-container"><video id="webcam" autoplay playsinline></video></div>
+<div id="toast">🎆 Grand Fireworks!</div>
+<div id="err"></div>
+
+<div class="glass-panel">
+  <input type="text" id="pin-input" placeholder="PIN: 03082024">
+  <button onclick="checkPin()">UNLOCK</button>
+  <button onclick="document.getElementById('file-upload').click()">GIFT PHOTOS</button>
+  <input type="file" id="file-upload" multiple accept="image/*" onchange="handleUpload(this)">
+  <button onclick="toggleCamera()">CAM</button>
+</div>
+
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script type="x-shader/x-vertex" id="vertexShader">
+  uniform float uTime;
+  uniform float uExplosion;
+  attribute vec3 aScatterPos;
+  attribute float aSize;
+  attribute float aIsStar;
+  varying vec3 vColor;
+  varying float vIsStar;
+
+  void main() {
+    vIsStar = aIsStar;
+    float wave = sin(uTime * 0.5 + position.y) * 0.1;
+    vec3 basePos = position + vec3(wave, 0.0, wave);
+    vec3 finalPos = mix(basePos, aScatterPos, uExplosion);
+    vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
+    gl_PointSize = aSize * (300.0 / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+    vColor = color;
+  }
+</script>
+
+<script type="x-shader/x-fragment" id="fragmentShader">
+  varying vec3 vColor;
+  varying float vIsStar;
+  void main() {
+    float d = distance(gl_PointCoord, vec2(0.5));
+    if (d > 0.5) discard;
+    float glow = (1.0 - d * 2.0);
+    if(vIsStar > 0.5) { 
+        glow = pow(glow, 1.35) * 0.9; 
+    } else {
+        glow = pow(glow, 1.8);
+    }
+    gl_FragColor = vec4(vColor, glow);
+  }
+</script>
+
+<script>
+(function () {
+  const errBox = document.getElementById('err');
+  const toast  = document.getElementById('toast');
+  let scene, camera, renderer, composer, clock;
+  let treeSystem, explosionFactor = 0, targetRotation = 0;
+  let treeGroup, ornaments = [];
+  let snowSystem, snowVel = [], snowPhase = [];
+  let tAccum = 0;
+  const fireworks = [];
+
+  let photoTextures = [];
+  let photoPlanes = [];
+
+  // ✅ 新增：更像“左右平移→旋转”的手势旋转控制
+  let gestureRot = 0;
+  let rotVel = 0;
+
+  function showErr(e){ errBox.style.display = 'block'; errBox.textContent = "⚠️ Error:\n" + (e && e.stack ? e.stack : e); }
+  function showToast(msg){ toast.textContent = msg; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 1500); }
+
+  function init() {
+    scene = new THREE.Scene();
+    treeGroup = new THREE.Group();
+    scene.add(treeGroup);
+
+    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 3, 20);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setClearColor(0x020105, 1);
+    document.body.appendChild(renderer.domElement);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const pointLight = new THREE.PointLight(0xffffff, 1.2);
+    pointLight.position.set(10, 10, 10);
+    scene.add(pointLight);
+
+    clock = new THREE.Clock();
+    const renderPass = new THREE.RenderPass(scene, camera);
+
+    // 稍微增强 bloom，让密集粒子更像参考图（不改整体结构）
+    const bloomPass  = new THREE.UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.85, 0.35, 0.12
+    );
+
+    composer = new THREE.EffectComposer(renderer);
+    composer.addPass(renderPass);
+    composer.addPass(bloomPass);
+
+    createTree();
+    createOrnaments();
+    createSnow();
+    setupHands();
+    animate();
+  }
+
+  function layeredRadius(h01) {
+    const base = (1.0 - h01);
+    const taper = Math.pow(base, 0.72);
+    const layers = 6.0;
+    const wave = Math.sin(h01 * Math.PI * layers) * 0.22 * (0.35 + 0.65 * base);
+    return Math.max(0.08, (4.6 * taper) * (1.0 + wave + 0.18 * Math.pow(base, 1.3)));
+  }
+
+  function createTree() {
+    // ✅ 粒子更多更密集（像参考图）
+    const count = 36000;
+
+    const geo = new THREE.BufferGeometry();
+    const positions = [], scatters = [], colors = [], sizes = [], isStar = [];
+
+    const purple = new THREE.Color(0xb388ff);
+    const blue   = new THREE.Color(0x3aa0ff);
+    const greenA = new THREE.Color(0x2de3a6);
+    const white  = new THREE.Color(0xffffff);
+
+    for (let i = 0; i < count; i++) {
+      const h = Math.random();
+      const radius = layeredRadius(h);
+      const angle = Math.random() * Math.PI * 2;
+
+      // ✅ 稍微更“贴近外层+更密”的分布（看起来更有实体感）
+      const dist = Math.pow(Math.random(), 0.22) * radius;  // 更靠外，更像“树的表面密粒子”
+      const twist = h * 7.0;
+
+      const x = Math.cos(angle + twist) * dist;
+      const y = -5.0 + h * 12.0;
+      const z = Math.sin(angle + twist) * dist;
+
+      positions.push(x, y, z);
+
+      // 爆炸散开
+      scatters.push((Math.random()-0.5)*42, (Math.random()-0.5)*38, (Math.random()-0.5)*42);
+
+      const r = Math.random();
+      let col;
+      if (r < 0.74) col = purple.clone();
+      else if (r < 0.95) col = blue.clone();
+      else if (r < 0.985) col = greenA.clone();
+      else col = white.clone();
+
+      col.offsetHSL((Math.random()-0.5)*0.02, (Math.random()-0.5)*0.06, (Math.random()-0.5)*0.05);
+
+      colors.push(col.r, col.g, col.b);
+
+      // ✅ 粒子更小、更细腻
+      sizes.push(Math.random() * 0.34 + 0.16); // 0.16~0.50
+      isStar.push(0.0);
+    }
+
+    // 顶部爱心（保持）
+    for (let i = 0; i < 900; i++) {
+      const t = Math.random() * Math.PI * 2;
+      const x = 16 * Math.pow(Math.sin(t), 3) * 0.08;
+      const y = 7.7 + (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) * 0.08;
+      positions.push(x, y, (Math.random()-0.5)*0.5);
+      scatters.push((Math.random()-0.5)*42, 7+(Math.random())*12, (Math.random()-0.5)*42);
+
+      colors.push(0.62, 0.56, 1.00);
+      sizes.push(0.62);
+      isStar.push(1.0);
+    }
+
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('aScatterPos', new THREE.Float32BufferAttribute(scatters, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setAttribute('aSize', new THREE.Float32BufferAttribute(sizes, 1));
+    geo.setAttribute('aIsStar', new THREE.Float32BufferAttribute(isStar, 1));
+
+    treeSystem = new THREE.Points(geo, new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uExplosion: { value: 0 } },
+      vertexShader: document.getElementById('vertexShader').textContent,
+      fragmentShader: document.getElementById('fragmentShader').textContent,
+      transparent: true, blending: THREE.NormalBlending, depthWrite: true, vertexColors: true
+    }));
+    treeGroup.add(treeSystem);
+  }
+
+  // 照片平面（保持你“礼物=相片”的逻辑）
+  function createOrnaments() {
+    photoPlanes.forEach(p => treeGroup.remove(p));
+    ornaments = [];
+    photoPlanes = [];
+
+    const giftCount = 24;
+    const baseW = 1.05;
+    const baseH = 0.78;
+
+    for (let i = 0; i < giftCount; i++) {
+      const h = 0.1 + (i / giftCount) * 0.8;
+      const radius = layeredRadius(h) * 1.05;
+      const angle = (i / giftCount) * Math.PI * 8;
+
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x1b0f2b, metalness: 0.08, roughness: 0.85, transparent: true, opacity: 0.92
+      });
+
+      const geo = new THREE.PlaneGeometry(baseW, baseH);
+      const plane = new THREE.Mesh(geo, mat);
+
+      const posX = Math.cos(angle) * radius;
+      const posY = -5.0 + h * 12.0;
+      const posZ = Math.sin(angle) * radius;
+
+      plane.position.set(posX, posY, posZ);
+
+      const outward = new THREE.Vector3(posX, 0, posZ).normalize();
+      plane.lookAt(plane.position.clone().add(outward));
+      plane.rotateY(Math.PI);
+      plane.rotateZ((Math.random()-0.5) * 0.25);
+
+      plane.userData = {
+        origPos: new THREE.Vector3(posX, posY, posZ),
+        scatterPos: new THREE.Vector3((Math.random()-0.5)*46, (Math.random()-0.5)*40, (Math.random()-0.5)*46)
+      };
+
+      treeGroup.add(plane);
+      photoPlanes.push(plane);
+      ornaments.push(plane);
+    }
+  }
+
+  window.handleUpload = function(input) {
+    const files = Array.from(input.files);
+    if (!files.length) return;
+
+    const loader = new THREE.TextureLoader();
+    photoTextures = [];
+
+    let loaded = 0;
+    files.forEach((file) => {
+      const url = URL.createObjectURL(file);
+      loader.load(url, (tex) => {
+        tex.encoding = THREE.sRGBEncoding;
+        photoTextures.push(tex);
+        loaded++;
+        if (loaded === files.length) applyPhotos();
+      }, undefined, () => {
+        loaded++;
+        if (loaded === files.length) applyPhotos();
+      });
+    });
+
+    function applyPhotos(){
+      if (!photoTextures.length) { showToast("No valid images"); return; }
+      for (let i = 0; i < photoPlanes.length; i++) {
+        const tex = photoTextures[i % photoTextures.length];
+        photoPlanes[i].material = new THREE.MeshStandardMaterial({
+          map: tex, metalness: 0.03, roughness: 0.55, transparent: true, opacity: 0.99
+        });
+      }
+      showToast("Photos attached! ✨");
+    }
+  };
+
+  function spawnFirework() {
+    const start = new THREE.Vector3((Math.random()-0.5)*20, -6, (Math.random()-0.5)*10);
+    const peakY = 4 + Math.random() * 8;
+    const col = new THREE.Color().setHSL(Math.random(), 0.8, 0.6);
+    const rocketGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array([start.x, start.y, start.z]), 3));
+    const rocket = new THREE.Points(rocketGeo, new THREE.PointsMaterial({ size: 0.2, color: col }));
+    scene.add(rocket);
+
+    const pCount = 1600;
+    const pGeo = new THREE.BufferGeometry();
+    const pPos = new Float32Array(pCount * 3), pVel = new Float32Array(pCount * 3);
+    for (let i=0; i<pCount; i++){
+      pPos.set([start.x, peakY, start.z], i*3);
+      const theta = 2*Math.PI*Math.random(), phi = Math.acos(2*Math.random()-1), spd = 2.5 + Math.random()*6;
+      pVel.set([Math.sin(phi)*Math.cos(theta)*spd, Math.cos(phi)*spd, Math.sin(phi)*Math.sin(theta)*spd], i*3);
+    }
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    const pMat = new THREE.PointsMaterial({ size: 0.15, color: col, transparent: true, opacity: 0, blending: THREE.AdditiveBlending });
+    const particles = new THREE.Points(pGeo, pMat);
+    scene.add(particles);
+    fireworks.push({ phase:"rocket", t:0, life:0, start, peakY, rocket, particles, pGeo, pMat, pVel });
+  }
+
+  function updateFireworks(dt){
+    for (let i=fireworks.length-1; i>=0; i--){
+      const fw = fireworks[i];
+      if (fw.phase === "rocket"){
+        fw.t += dt;
+        const p = Math.min(1, fw.t / 1.1);
+        fw.rocket.geometry.getAttribute('position').array[1] = fw.start.y + (fw.peakY - fw.start.y) * (1 - Math.pow(1-p,2));
+        fw.rocket.geometry.getAttribute('position').needsUpdate = true;
+        if (p >= 1){ fw.phase = "burst"; fw.pMat.opacity = 1.0; scene.remove(fw.rocket); }
+      } else {
+        fw.life += dt;
+        const arr = fw.pGeo.getAttribute('position').array;
+        for (let k=0; k<fw.pVel.length; k+=3){
+          fw.pVel[k+1] -= 3.5 * dt;
+          arr[k] += fw.pVel[k]*dt; arr[k+1] += fw.pVel[k+1]*dt; arr[k+2] += fw.pVel[k+2]*dt;
+        }
+        fw.pGeo.getAttribute('position').needsUpdate = true;
+        fw.pMat.opacity = Math.max(0, 1 - fw.life/2.2);
+        if (fw.life > 2.2){ scene.remove(fw.particles); fireworks.splice(i,1); }
+      }
+    }
+  }
+
+  function createSnow() {
+    const snowCount = 2000;
+    const snowGeo = new THREE.BufferGeometry();
+    const snowPos = new Float32Array(snowCount * 3);
+    for (let i = 0; i < snowCount; i++) {
+      snowPos[i*3+0] = (Math.random()-0.5)*50; snowPos[i*3+1] = Math.random()*30 - 8; snowPos[i*3+2] = (Math.random()-0.5)*50;
+      snowVel[i] = 0.02 + Math.random()*0.03; snowPhase[i] = Math.random()*Math.PI*2;
+    }
+    snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
+    snowSystem = new THREE.Points(snowGeo, new THREE.PointsMaterial({ size: 0.1, color: 0xffffff, transparent: true, opacity: 0.35 }));
+    scene.add(snowSystem);
+  }
+
+  function updateSnow(time) {
+    const arr = snowSystem.geometry.getAttribute('position').array;
+    for (let i = 0; i < snowVel.length; i++) {
+      arr[i*3+1] -= snowVel[i];
+      if (arr[i*3+1] < -15) arr[i*3+1] = 15;
+    }
+    snowSystem.geometry.getAttribute('position').needsUpdate = true;
+  }
+
+  // ✅ 手势：左右移动 -> 树旋转（替代之前的平移）
+  function setupHands() {
+    if (typeof Hands === 'undefined') { setTimeout(setupHands, 500); return; }
+
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5 });
+
+    hands.onResults(res => {
+      if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+        const lm = res.multiHandLandmarks[0];
+
+        // 爆炸：拇指(4)与小指(20)
+        const dist = Math.hypot(lm[4].x - lm[20].x, lm[4].y - lm[20].y);
+        explosionFactor = THREE.MathUtils.lerp(explosionFactor, dist > 0.4 ? 1.0 : 0.0, 0.1);
+
+        // ✅ 左右平移手势 → 旋转输入：用 wrist(0) 的 x
+        // [-1,1] -> 旋转速度
+        const x01 = (lm[0].x - 0.5) * 2.0;
+        gestureRot = THREE.MathUtils.clamp(x01, -1.0, 1.0);
+
+        // 兼容原来的 targetRotation（保持存在，不改结构太大）
+        targetRotation = gestureRot;
+
+      } else {
+        explosionFactor = THREE.MathUtils.lerp(explosionFactor, 0, 0.05);
+        gestureRot = THREE.MathUtils.lerp(gestureRot, 0, 0.08);
+        targetRotation = gestureRot;
+      }
+    });
+
+    const cam = new Camera(document.getElementById('webcam'), {
+      onFrame: async () => { await hands.send({ image: document.getElementById('webcam') }); }
+    });
+    cam.start();
+  }
+
+  function animate(){
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    tAccum += dt;
+
+    treeSystem.material.uniforms.uTime.value = tAccum;
+    treeSystem.material.uniforms.uExplosion.value = explosionFactor;
+
+    // ✅ 旋转（替代平移）：让“左右手势”带动旋转更明显
+    rotVel = THREE.MathUtils.lerp(rotVel, targetRotation * 0.08, 0.12);
+    treeGroup.rotation.y += 0.004 + rotVel;
+
+    // ✅ 照片：粒子散开时“变大一点”，更清楚
+    const photoScale = THREE.MathUtils.lerp(1.0, 1.85, explosionFactor);
+
+    ornaments.forEach((p) => {
+      p.position.lerpVectors(p.userData.origPos, p.userData.scatterPos, explosionFactor);
+      p.scale.set(photoScale, photoScale, photoScale);
+      p.rotation.y += 0.008;
+    });
+
+    updateSnow(tAccum);
+    updateFireworks(dt);
+    camera.position.z = THREE.MathUtils.lerp(camera.position.z, 20 + explosionFactor*10, 0.05);
+    composer.render();
+  }
+
+  window.checkPin = function(){
+    if (document.getElementById('pin-input').value === "03082024") {
+      showToast("🎆 Grand Fireworks Show!");
+      for (let i = 0; i < 10; i++) setTimeout(spawnFirework, i * 200);
+    } else { showToast("PIN incorrect"); }
+  };
+
+  window.toggleCamera = function(){
+    const v = document.getElementById('video-container');
+    v.style.display = (v.style.display === 'none' || v.style.display === '') ? 'block' : 'none';
+  };
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight); composer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  try { init(); } catch(e) { showErr(e); }
+})();
+</script>
+
+</body>
+</html>
