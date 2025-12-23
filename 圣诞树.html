@@ -389,7 +389,7 @@
     snowSystem.geometry.getAttribute('position').needsUpdate = true;
   }
 
-  // ✅ 手势：左右移动 -> 树旋转（替代之前的平移）
+
   function setupHands() {
     if (typeof Hands === 'undefined') { setTimeout(setupHands, 500); return; }
 
@@ -408,7 +408,7 @@
         const x01 = (lm[0].x - 0.5) * 2.0;
         gestureRot = THREE.MathUtils.clamp(x01, -1.0, 1.0);
 
-        // 兼容原来的 targetRotation（保持存在，不改结构太大）
+
         targetRotation = gestureRot;
 
       } else {
@@ -474,4 +474,5 @@
 
 </body>
 </html>
+
 
