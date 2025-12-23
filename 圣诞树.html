@@ -7,7 +7,6 @@
     :root { --purple: #b388ff; }
     body { margin: 0; background: #020104; color: white; font-family: sans-serif; overflow: hidden; }
 
-    /* ✅ 标题：罗曼字体 + 蓝色 */
     #header-ui { position: absolute; top: 40px; width: 100%; text-align: center; z-index: 10; pointer-events: none; }
     h1{
       font-family: "Times New Roman", Times, serif;
@@ -117,7 +116,6 @@
   let photoTextures = [];
   let photoPlanes = [];
 
-  // ✅ 新增：更像“左右平移→旋转”的手势旋转控制
   let gestureRot = 0;
   let rotVel = 0;
 
@@ -147,7 +145,7 @@
     clock = new THREE.Clock();
     const renderPass = new THREE.RenderPass(scene, camera);
 
-    // 稍微增强 bloom，让密集粒子更像参考图（不改整体结构）
+
     const bloomPass  = new THREE.UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
       0.85, 0.35, 0.12
@@ -173,7 +171,7 @@
   }
 
   function createTree() {
-    // ✅ 粒子更多更密集（像参考图）
+
     const count = 36000;
 
     const geo = new THREE.BufferGeometry();
@@ -189,8 +187,8 @@
       const radius = layeredRadius(h);
       const angle = Math.random() * Math.PI * 2;
 
-      // ✅ 稍微更“贴近外层+更密”的分布（看起来更有实体感）
-      const dist = Math.pow(Math.random(), 0.22) * radius;  // 更靠外，更像“树的表面密粒子”
+  
+      const dist = Math.pow(Math.random(), 0.22) * radius;  
       const twist = h * 7.0;
 
       const x = Math.cos(angle + twist) * dist;
@@ -199,7 +197,7 @@
 
       positions.push(x, y, z);
 
-      // 爆炸散开
+      
       scatters.push((Math.random()-0.5)*42, (Math.random()-0.5)*38, (Math.random()-0.5)*42);
 
       const r = Math.random();
@@ -213,12 +211,12 @@
 
       colors.push(col.r, col.g, col.b);
 
-      // ✅ 粒子更小、更细腻
-      sizes.push(Math.random() * 0.34 + 0.16); // 0.16~0.50
+
+      sizes.push(Math.random() * 0.34 + 0.16); 
       isStar.push(0.0);
     }
 
-    // 顶部爱心（保持）
+
     for (let i = 0; i < 900; i++) {
       const t = Math.random() * Math.PI * 2;
       const x = 16 * Math.pow(Math.sin(t), 3) * 0.08;
@@ -246,7 +244,7 @@
     treeGroup.add(treeSystem);
   }
 
-  // 照片平面（保持你“礼物=相片”的逻辑）
+
   function createOrnaments() {
     photoPlanes.forEach(p => treeGroup.remove(p));
     ornaments = [];
@@ -402,12 +400,11 @@
       if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
         const lm = res.multiHandLandmarks[0];
 
-        // 爆炸：拇指(4)与小指(20)
+ 
         const dist = Math.hypot(lm[4].x - lm[20].x, lm[4].y - lm[20].y);
         explosionFactor = THREE.MathUtils.lerp(explosionFactor, dist > 0.4 ? 1.0 : 0.0, 0.1);
 
-        // ✅ 左右平移手势 → 旋转输入：用 wrist(0) 的 x
-        // [-1,1] -> 旋转速度
+     
         const x01 = (lm[0].x - 0.5) * 2.0;
         gestureRot = THREE.MathUtils.clamp(x01, -1.0, 1.0);
 
@@ -435,11 +432,11 @@
     treeSystem.material.uniforms.uTime.value = tAccum;
     treeSystem.material.uniforms.uExplosion.value = explosionFactor;
 
-    // ✅ 旋转（替代平移）：让“左右手势”带动旋转更明显
+
     rotVel = THREE.MathUtils.lerp(rotVel, targetRotation * 0.08, 0.12);
     treeGroup.rotation.y += 0.004 + rotVel;
 
-    // ✅ 照片：粒子散开时“变大一点”，更清楚
+    
     const photoScale = THREE.MathUtils.lerp(1.0, 1.85, explosionFactor);
 
     ornaments.forEach((p) => {
@@ -477,3 +474,4 @@
 
 </body>
 </html>
+
